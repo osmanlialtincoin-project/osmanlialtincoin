@@ -1,0 +1,9 @@
+Building Osmanlialtincoin
+
+See doc/readme-qt.rst for instructions on building Osmanlialtincoin-Qt,
+the intended-for-end-users, nice-graphical-interface, reference
+implementation of Osmanlialtincoin.
+
+See doc/build-*.txt for instructions on building osmanlialtincoind,
+the intended-for-services, no-graphical-interface, reference
+implementation of Osmanlialtincoin.
