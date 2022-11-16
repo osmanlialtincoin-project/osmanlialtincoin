@@ -1,34 +1,34 @@
-Osmanli_altin_coin Core integration/staging tree
+OSMANLI ALTIN COIN Core integration/staging tree
 =====================================
 
-[![Build Status](https://travis-ci.org/osmanli_altin_coin-project/osmanli_altin_coin.svg?branch=master)](https://travis-ci.org/osmanli_altin_coin-project/osmanli_altin_coin)
+[![Build Status](https://travis-ci.org/osmanlialtincoin-project/osmanlialtincoin.svg?branch=master)](https://travis-ci.org/osmanlialtincoin-project/osmanlialtincoin)
 
-https://osmanli_altin_coin.org
+[https://osmanlialtincoin.org]
 
-What is Osmanli_altin_coin?
+What is OSMANLI ALTIN COIN ?
 ----------------
 
-Osmanli_altin_coin is an experimental digital currency that enables instant payments to
-anyone, anywhere in the world. Osmanli_altin_coin uses peer-to-peer technology to operate
+OSMANLI ALTIN COIN is an experimental digital currency that enables instant payments to
+anyone, anywhere in the world. OSMANLI ALTIN COIN uses peer-to-peer technology to operate
 with no central authority: managing transactions and issuing money are carried
-out collectively by the network. Osmanli_altin_coin Core is the name of open source
+out collectively by the network. OSMANLI ALTIN COIN Core is the name of open source
 software which enables the use of this currency.
 
 For more information, as well as an immediately useable, binary version of
-the Osmanli_altin_coin Core software, see [https://osmanli_altin_coin.org](https://osmanli_altin_coin.org).
+the OSMANLI ALTIN COIN Core software, see [https://osmanlialtincoin.org](https://osmanlialtincoin.org).
 
 License
 -------
 
-Osmanli_altin_coin Core is released under the terms of the MIT license. See [COPYING](COPYING) for more
+OSMANLI ALTIN COIN Core is released under the terms of the MIT license. See [COPYING](COPYING) for more
 information or see https://opensource.org/licenses/MIT.
 
 Development Process
 -------------------
 
 The `master` branch is regularly built and tested, but is not guaranteed to be
-completely stable. [Tags](https://github.com/osmanli_altin_coin-project/osmanli_altin_coin/tags) are created
-regularly to indicate new official, stable release versions of Osmanli_altin_coin Core.
+completely stable. [Tags](https://github.com/osmanlialtincoin-project/osmanlialtincoin/tags) are created
+regularly to indicate new official, stable release versions of OSMANLI ALTIN COIN Core.
 
 The contribution workflow is described in [CONTRIBUTING.md](CONTRIBUTING.md)
 and useful hints for developers can be found in [doc/developer-notes.md](doc/developer-notes.md).
@@ -71,7 +71,7 @@ Translations
 ------------
 
 We only accept translation fixes that are submitted through [Bitcoin Core's Transifex page](https://www.transifex.com/projects/p/bitcoin/).
-Translations are converted to Osmanli_altin_coin periodically.
+Translations are converted to OSMANLI ALTIN COIN periodically.
 
 Translations are periodically pulled from Transifex and merged into the git repository. See the
 [translation process](doc/translation_process.md) for details on how this works.
