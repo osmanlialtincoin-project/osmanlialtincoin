@@ -114,13 +114,15 @@ public:
         // service bits we want, but we should get them updated to support all service bits wanted by any
         // release ASAP to avoid it where possible.
 
-        vSeeds.emplace_back("osmanlialtincoin.com");
-        vSeeds.emplace_back("osmalialtincoin.com");
-        vSeeds.emplace_back("osmalialtincoin.org");
-        vSeeds.emplace_back("38.242.153.138");
-        vSeeds.emplace_back("38.242.153.137");
-        vSeeds.emplace_back("193.203.15.202");
-        vSeeds.emplace_back("38.242.153.110");
+        vSeeds.emplace_back("node1.osmanlialtincoin.com");
+        vSeeds.emplace_back("node2.osmanlialtincoin.com");
+        vSeeds.emplace_back("node3.osmanlialtincoin.com");
+        vSeeds.emplace_back("node4.osmanlialtincoin.com");
+        vSeeds.emplace_back("node5.osmanlialtincoin.com");
+        vSeeds.emplace_back("node6.osmanlialtincoin.com");
+        vSeeds.emplace_back("node7.osmanlialtincoin.com");
+        vSeeds.emplace_back("node8.osmanlialtincoin.com");
+        vSeeds.emplace_back("node9.osmanlialtincoin.com");
 
         base58Prefixes[PUBKEY_ADDRESS] = std::vector<unsigned char>(1, 115);
         base58Prefixes[SCRIPT_ADDRESS] = std::vector<unsigned char>(1,5);
@@ -140,17 +142,40 @@ public:
         checkpointData = {
             {
                 {0, uint256S("0x81624aee56c4b7546e7c83f7911434978369df44b8b2334cc5503bd1ca4dc570")},
-                {20, uint256S("0x9f2e83d577ce110a2065540b48982b837b9991fad8c54665c05c3fc93e3a96c3")},
-                {40, uint256S("0x1de3f3a55a8f362c04c03f89c38de02c9a722c0bdf4c157c5111c7b48a4d28bc")},
-                {80, uint256S("0xff48f2c7d136482d3fea833a9e834b90dc8e50676d1c10bf884d2d94634158f7")},
-                {135, uint256S("0xc87dac4834b685c6d43d454b49ea65f722aa93544e2f3fa6eed6b96e49703b4e")},
+                {2100, uint256S("0x4497c7bb09f5a40cf194acc54184178ee1dd8b9b3831ffe2c2fa895604add36e")},
+                {14426, uint256S("0x2452ab7d283bd2bea36f40c578ce709d8e81c2d1b55de9ead4ef59875f296901")},
+                {28574, uint256S("0x969200c365a4ce7cac7a1d4a5e6a98866c880c3b7c1480fba2a5e201da2ea02c")},
+                {41263, uint256S("0xe79c53b99bfe86fc40827ca2bb68ff8cafa3fc793ac4301b58fda24064f8693b")},
+                {52498, uint256S("0x6450ed7c257eac5920f23b26d5d210851888f3fe20526862eabd36a502efc15f")},
+                {64185, uint256S("0xe76646ed26a5d09cde52811d6d54120aff47d3318224c8dd376ab39a22d3c51b")},
+                {78416, uint256S("0xaba4208b668d3b331f258b5ed2aed0d4b0807685ba1ad0ccdfd5955bdaa22200")},
+                {87497, uint256S("0xa8d09b9cd5dab6c8f54387fd61a9e600aac02c17c0d3727bfdbf2ba7183929b5")},
+                {99712, uint256S("0x4dfaacc09fe78f7c32214f25d0b31a2f318f17cdf103d96d3c53950a30922ed1")},
+                {109523, uint256S("0xbd5d9da207eb26e9b5e6db261a9b470d6d45f8bf671898822976aead06159b23")},
+                {117236, uint256S("0x095c4a32bb36100757a1d795de419f21c6f4601c2055b0660446275ef79dc0fc")},
+                {129413, uint256S("0x0b3f6215b000eafe936160038be0b67f2c47cebc7f301391285c4ba6e8dfb254")},
+                {145216, uint256S("0xb1362708661d1899bc6290bcc0630302f669f361822db5dd5883bca3758bc77f")},
+                {156237, uint256S("0xdd290b35e30160b31c16335ee668ebf400bfbd82066e44f316f9b72bf1c84695")},
+                {166845, uint256S("0x851dd7b599ca66dadc7e218a0638a419c67ec9db3fcaef52c038f89433719618")},
+                {178987, uint256S("0xcdc9bae88312f19297914abc08359930859acdb51f29056acd73e4c15241522d")},
+                {189231, uint256S("0x49f76138f6889f03a4e0efff5209102ef6e1aee53497360cfbee8584035fea1e")},
+                {198685, uint256S("0x2b36229d47ffdf69637a5b3219bf99bcc9d81c12b3f96dda97425701ae0c6f53")},
+                {207417, uint256S("0x7ef20cc73197d11cc7fcdf4451f9d19374f4f99e71696f8a963e0fd9f56f567d")},
+                {218419, uint256S("0x1dd6f9d0e706be55339ed811e7011cb4b69403c3c7ed9599a92129715103e1a8")},
+                {227589, uint256S("0x5a845444886f45c63f507778064e61f51c93bfad0ad81346c9f66bd29c4290c8")},
+                {239418, uint256S("0x6700b4e2f33a64d28032a79b6743a2d79f99e3cc7c1a34ae2572b22b770789e8")},
+                {248156, uint256S("0xf9753cdbeb1774c7ab3f01daa83d1df44c8603bdc2c1ceb673c9ce7f114f11ed")},
+                {257483, uint256S("0xec3bacd3be37dc97ecc5c6d066989fde69635d4909eb2928979d130b302c6706")},
+                {268714, uint256S("0x47ec6bce2b0d09fcba96d92fba00ff60a4d24112658fdb51c527f0ae02112a1d")},
+                {279651, uint256S("0xf9838f52da84e0c5459b2309b70394de78a56e7d54385249932252e7a1dd62ed")},
+                {290152, uint256S("0xaf7b9467d0ccc2465b3729a50595af1268539f8e8cfc48ac103ff0fe153625f0")},
             }
         };
 
         chainTxData = ChainTxData{
             // Data from rpc: getchaintxstats 4096 2cdba8c47858d34cf0e02dfb8733263a3ed8705b1663ec7c158783d77b93e7ee
-            /* nTime    */ 1659330900,
-            /* nTxCount */ 0,
+            /* nTime    */ 1740314681,
+            /* nTxCount */ 535739,
             /* dTxRate  */ 0
         };
 

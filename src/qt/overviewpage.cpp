@@ -16,6 +16,15 @@
 #include <qt/walletmodel.h>
 
 #include <QAbstractItemDelegate>
+#include <QNetworkAccessManager>
+#include <QNetworkRequest>
+#include <QNetworkReply>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonValue>
+#include <QUrl>
+#include <QObject>
+#include <QString>
 #include <QPainter>
 
 #define DECORATION_SIZE 54
@@ -127,6 +136,9 @@ OverviewPage::OverviewPage(const PlatformStyle *platformStyle, QWidget *parent) 
     ui->labelTransactionsStatus->setIcon(icon);
     ui->labelWalletStatus->setIcon(icon);
 
+    // Set Price
+    UpdatePrice();
+
     // Recent transactions
     ui->listTransactions->setItemDelegate(txdelegate);
     ui->listTransactions->setIconSize(QSize(DECORATION_SIZE, DECORATION_SIZE));
@@ -139,6 +151,32 @@ OverviewPage::OverviewPage(const PlatformStyle *platformStyle, QWidget *parent) 
     showOutOfSyncWarning(true);
     connect(ui->labelWalletStatus, &QPushButton::clicked, this, &OverviewPage::handleOutOfSyncWarningClicks);
     connect(ui->labelTransactionsStatus, &QPushButton::clicked, this, &OverviewPage::handleOutOfSyncWarningClicks);
+}
+
+void OverviewPage::UpdatePrice()
+{
+    QNetworkAccessManager *manager = new QNetworkAccessManager(this);
+    QUrl url("https://explorer.osmanlialtincoin.org/ext/price");
+    QNetworkRequest request(url);
+
+    QNetworkReply *reply = manager->get(request);
+    
+    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+        if (reply->error() == QNetworkReply::NoError) {
+            QByteArray response_data = reply->readAll();
+            QJsonDocument jsonDoc = QJsonDocument::fromJson(response_data);
+            QJsonObject jsonObj = jsonDoc.object();
+            
+            if (jsonObj.contains("OAC")) {
+                QJsonObject priceObj = jsonObj.value("OAC").toObject();
+                if (priceObj.contains("usd")) {
+                    double price = priceObj.value("usd").toDouble();
+                    ui->label_Price->setText("$ " + QString::number(price, 'f', 8));
+                }
+            }
+        }
+        reply->deleteLater();
+    });
 }
 
 void OverviewPage::handleTransactionClicked(const QModelIndex &index)
