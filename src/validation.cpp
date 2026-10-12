@@ -1151,7 +1151,8 @@ bool ReadRawBlockFromDisk(std::vector<uint8_t>& block, const CBlockIndex* pindex
     return ReadRawBlockFromDisk(block, block_pos, message_start);
 }
 
-CAmount GetBlockSubsidy(int nHeight, const Consensus::Params& consensusParams)
+/** Uncapped schedule: 8,400,000 OAC premine in block 1, then 100 OAC halving every nSubsidyHalvingInterval blocks. */
+static CAmount GetScheduledBlockSubsidy(int nHeight, const Consensus::Params& consensusParams)
 {
     int halvings = nHeight / consensusParams.nSubsidyHalvingInterval;
     // Force block reward to zero when right shift is undefined.
@@ -1165,9 +1166,40 @@ CAmount GetBlockSubsidy(int nHeight, const Consensus::Params& consensusParams)
     else
         nSubsidy = 100 * COIN;
 
-    // Subsidy is cut in half every 210,000 blocks which will occur approximately every 4 years.
     nSubsidy >>= halvings;
     return nSubsidy;
+}
+
+/** Sum of GetScheduledBlockSubsidy() over heights 0..nHeight. */
+static CAmount GetScheduledSupply(int nHeight, const Consensus::Params& consensusParams)
+{
+    if (nHeight < 1)
+        return 0;
+
+    CAmount nSupply = GetScheduledBlockSubsidy(1, consensusParams);
+    const int64_t nInterval = consensusParams.nSubsidyHalvingInterval;
+    for (int halvings = 0; halvings < 64; halvings++) {
+        int64_t nStart = std::max<int64_t>(2, halvings * nInterval);
+        int64_t nEnd = std::min<int64_t>(nHeight, (halvings + 1) * nInterval - 1);
+        if (nStart > nHeight)
+            break;
+        if (nEnd >= nStart)
+            nSupply += ((100 * COIN) >> halvings) * (nEnd - nStart + 1);
+    }
+    return nSupply;
+}
+
+CAmount GetBlockSubsidy(int nHeight, const Consensus::Params& consensusParams)
+{
+    // Total supply (block 1 premine + all mining rewards) is capped at MAX_MONEY (84,000,000 OAC).
+    // Blocks before the cap get the unchanged schedule, the block that reaches the cap gets the
+    // remainder, and later blocks get no subsidy. This only ever lowers the reward (soft fork),
+    // so all existing blocks remain valid. On mainnet the cap is reached at height 1,428,015.
+    CAmount nSubsidy = GetScheduledBlockSubsidy(nHeight, consensusParams);
+    CAmount nIssued = GetScheduledSupply(nHeight - 1, consensusParams);
+    if (nIssued >= MAX_MONEY)
+        return 0;
+    return std::min(nSubsidy, MAX_MONEY - nIssued);
 }
 
 bool IsInitialBlockDownload()
