@@ -65,6 +65,8 @@ class CMainParams : public CChainParams {
 public:
     CMainParams() {
         strNetworkID = "main";
+        consensus.nSecureMiningHeight = 505400;
+        consensus.miningAuthPubKey = ParseHex("030ca222a5da6198497e8b8d132683932326021020c97d2b3499e08f5a40ed55b9");
         consensus.nSubsidyHalvingInterval = 420000;
         consensus.BIP16Height = 4;
         consensus.BIP34Height = 8;
@@ -285,6 +287,15 @@ class CRegTestParams : public CChainParams {
 public:
     explicit CRegTestParams(const ArgsManager& args) {
         strNetworkID = "regtest";
+        // Public test fixture (scalar 1); never used by mainnet.
+        consensus.miningAuthPubKey = ParseHex("0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798");
+        if (args.IsArgSet("-secureminingheight")) {
+            int64_t height;
+            if (!ParseInt64(args.GetArg("-secureminingheight", ""), &height) || height < 1 || height >= std::numeric_limits<int>::max()) {
+                throw std::runtime_error("Invalid secureminingheight: expected a positive regtest height");
+            }
+            consensus.nSecureMiningHeight = height;
+        }
         consensus.nSubsidyHalvingInterval = 150;
         consensus.BIP16Height = 0;
         consensus.BIP34Height = 500; // BIP34 activated on regtest (Used in functional tests)
@@ -414,6 +425,9 @@ const CChainParams &Params() {
 
 std::unique_ptr<const CChainParams> CreateChainParams(const std::string& chain)
 {
+    if (chain != CBaseChainParams::REGTEST && gArgs.IsArgSet("-secureminingheight")) {
+        throw std::runtime_error("secureminingheight may only be used on regtest");
+    }
     if (chain == CBaseChainParams::MAIN)
         return std::unique_ptr<CChainParams>(new CMainParams());
     else if (chain == CBaseChainParams::TESTNET)

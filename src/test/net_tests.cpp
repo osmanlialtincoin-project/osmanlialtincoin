@@ -75,6 +75,30 @@ static CDataStream AddrmanToStream(CAddrManSerializationMock& _addrman)
 
 BOOST_FIXTURE_TEST_SUITE(net_tests, BasicTestingSetup)
 
+BOOST_AUTO_TEST_CASE(secure_mining_peer_services)
+{
+    const ServiceFlags legacy = ServiceFlags(NODE_NETWORK | NODE_WITNESS);
+    const ServiceFlags upgraded = ServiceFlags(legacy | NODE_MINING_AUTH);
+    SetServiceFlagsIBDCache(false);
+    SetServiceFlagsMiningAuthCache(false);
+    BOOST_CHECK(HasAllDesirableServiceFlags(legacy));
+    BOOST_CHECK(HasAllDesirableServiceFlags(upgraded));
+
+    SetServiceFlagsMiningAuthCache(true);
+    BOOST_CHECK(!HasAllDesirableServiceFlags(legacy));
+    BOOST_CHECK(HasAllDesirableServiceFlags(upgraded));
+    BOOST_CHECK(GetDesirableServiceFlags(NODE_NONE) & NODE_MINING_AUTH);
+
+    SetServiceFlagsIBDCache(true);
+    const ServiceFlags limited = ServiceFlags(NODE_NETWORK_LIMITED | NODE_WITNESS);
+    BOOST_CHECK(!HasAllDesirableServiceFlags(limited));
+    BOOST_CHECK(HasAllDesirableServiceFlags(ServiceFlags(limited | NODE_MINING_AUTH)));
+
+    SetServiceFlagsMiningAuthCache(false);
+    BOOST_CHECK(HasAllDesirableServiceFlags(limited));
+    SetServiceFlagsIBDCache(false);
+}
+
 BOOST_AUTO_TEST_CASE(cnode_listen_port)
 {
     // test default

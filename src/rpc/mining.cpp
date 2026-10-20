@@ -12,6 +12,7 @@
 #include <core_io.h>
 #include <key_io.h>
 #include <miner.h>
+#include <mining_auth.h>
 #include <net.h>
 #include <policy/fees.h>
 #include <pow.h>
@@ -113,14 +114,21 @@ UniValue generateBlocks(std::shared_ptr<CReserveScript> coinbaseScript, int nGen
     UniValue blockHashes(UniValue::VARR);
     while (nHeight < nHeightEnd && !ShutdownRequested())
     {
-        std::unique_ptr<CBlockTemplate> pblocktemplate(BlockAssembler(Params()).CreateNewBlock(coinbaseScript->reserveScript));
-        if (!pblocktemplate.get())
-            throw JSONRPCError(RPC_INTERNAL_ERROR, "Couldn't create new block");
-        CBlock *pblock = &pblocktemplate->block;
+        std::unique_ptr<CBlockTemplate> pblocktemplate;
+        int block_height;
         {
             LOCK(cs_main);
-            IncrementExtraNonce(pblock, chainActive.Tip(), nExtraNonce);
+            block_height = chainActive.Height() + 1;
+            if (IsSecureMiningActive(block_height, Params().GetConsensus()) && !HasMiningAuthKey()) {
+                throw JSONRPCError(RPC_MISC_ERROR, "Secure mining requires miningprivkey in the daemon configuration");
+            }
+            pblocktemplate = BlockAssembler(Params()).CreateNewBlock(coinbaseScript->reserveScript);
+            if (!pblocktemplate) {
+                throw JSONRPCError(RPC_INTERNAL_ERROR, "Couldn't create new block");
+            }
+            IncrementExtraNonce(&pblocktemplate->block, chainActive.Tip(), nExtraNonce);
         }
+        CBlock *pblock = &pblocktemplate->block;
         while (nMaxTries > 0 && pblock->nNonce < nInnerLoopCount && !CheckProofOfWork(pblock->GetPoWHash(), pblock->nBits, Params().GetConsensus())) {
             ++pblock->nNonce;
             --nMaxTries;
@@ -130,6 +138,9 @@ UniValue generateBlocks(std::shared_ptr<CReserveScript> coinbaseScript, int nGen
         }
         if (pblock->nNonce == nInnerLoopCount) {
             continue;
+        }
+        if (!SignBlockMiningAuth(*pblock, Params().GetConsensus(), block_height)) {
+            throw JSONRPCError(RPC_INTERNAL_ERROR, "Failed to authorize mined block");
         }
         std::shared_ptr<const CBlock> shared_pblock = std::make_shared<const CBlock>(*pblock);
         if (!ProcessNewBlock(Params(), shared_pblock, true, nullptr))
@@ -201,6 +212,11 @@ static UniValue getmininginfo(const JSONRPCRequest& request)
                     "  \"networkhashps\": nnn,      (numeric) The network hashes per second\n"
                     "  \"pooledtx\": n              (numeric) The size of the mempool\n"
                     "  \"chain\": \"xxxx\",           (string) current network name as defined in BIP70 (main, test, regtest)\n"
+                    "  \"secure_mining\": {        (object) Mining authorization status (no private key material)\n"
+                    "    \"activation_height\": n,  (numeric) First height requiring authorization\n"
+                    "    \"active\": true|false,    (boolean) Whether the next block requires authorization\n"
+                    "    \"key_loaded\": true|false (boolean) Whether this daemon can authorize blocks\n"
+                    "  },\n"
                     "  \"warnings\": \"...\"          (string) any network and blockchain warnings\n"
                     "}\n"
                 },
@@ -221,6 +237,11 @@ static UniValue getmininginfo(const JSONRPCRequest& request)
     obj.pushKV("networkhashps",    getnetworkhashps(request));
     obj.pushKV("pooledtx",         (uint64_t)mempool.size());
     obj.pushKV("chain",            Params().NetworkIDString());
+    UniValue secure_mining(UniValue::VOBJ);
+    secure_mining.pushKV("activation_height", Params().GetConsensus().nSecureMiningHeight);
+    secure_mining.pushKV("active", IsSecureMiningActive(chainActive.Height() + 1, Params().GetConsensus()));
+    secure_mining.pushKV("key_loaded", HasMiningAuthKey());
+    obj.pushKV("secure_mining", secure_mining);
     obj.pushKV("warnings",         GetWarnings("statusbar"));
     return obj;
 }
@@ -298,6 +319,7 @@ static UniValue getblocktemplate(const JSONRPCRequest& request)
     if (request.fHelp || request.params.size() > 1)
         throw std::runtime_error(
             RPCHelpMan{"getblocktemplate",
+                "After secure mining activation, template creation requires a matching miningprivkey in the daemon configuration.\n"
                 "\nIf the request parameters include a 'mode' key, that is used to explicitly select between the default 'template' request or a 'proposal'.\n"
                 "It returns data needed to construct a block to work on.\n"
                 "For full specification, see BIPs 22, 23, 9, and 145:\n"
@@ -418,7 +440,7 @@ static UniValue getblocktemplate(const JSONRPCRequest& request)
             if (block.hashPrevBlock != pindexPrev->GetBlockHash())
                 return "inconclusive-not-best-prevblk";
             CValidationState state;
-            TestBlockValidity(state, Params(), block, pindexPrev, false, true);
+            TestBlockValidity(state, Params(), block, pindexPrev, false, true, false);
             return BIP22ValidationResult(state);
         }
 
@@ -439,6 +461,10 @@ static UniValue getblocktemplate(const JSONRPCRequest& request)
 
     if (strMode != "template")
         throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid mode");
+
+    if (IsSecureMiningActive(chainActive.Height() + 1, Params().GetConsensus()) && !HasMiningAuthKey()) {
+        throw JSONRPCError(RPC_MISC_ERROR, "Secure mining requires miningprivkey in the daemon configuration");
+    }
 
     if(!g_connman)
         throw JSONRPCError(RPC_CLIENT_P2P_DISABLED, "Error: Peer-to-peer functionality missing or disabled");
@@ -495,6 +521,11 @@ static UniValue getblocktemplate(const JSONRPCRequest& request)
         if (!IsRPCRunning())
             throw JSONRPCError(RPC_CLIENT_NOT_CONNECTED, "Shutting down");
         // TODO: Maybe recheck connections/IBD and (if something wrong) send an expires-immediately template to stop miners?
+    }
+
+    // Longpoll releases cs_main, so activation may have changed while waiting.
+    if (IsSecureMiningActive(chainActive.Height() + 1, Params().GetConsensus()) && !HasMiningAuthKey()) {
+        throw JSONRPCError(RPC_MISC_ERROR, "Secure mining requires miningprivkey in the daemon configuration");
     }
 
     const struct VBDeploymentInfo& segwit_info = VersionBitsDeploymentInfo[Consensus::DEPLOYMENT_SEGWIT];
@@ -657,16 +688,18 @@ static UniValue getblocktemplate(const JSONRPCRequest& request)
     result.pushKV("noncerange", "00000000ffffffff");
     int64_t nSigOpLimit = MAX_BLOCK_SIGOPS_COST;
     int64_t nSizeLimit = MAX_BLOCK_SERIALIZED_SIZE;
+    const int64_t mining_auth_size = IsSecureMiningActive(pindexPrev->nHeight + 1, consensusParams) ? MAX_MINING_AUTH_TRAILER_SIZE : 0;
     if (fPreSegWit) {
         assert(nSigOpLimit % WITNESS_SCALE_FACTOR == 0);
         nSigOpLimit /= WITNESS_SCALE_FACTOR;
         assert(nSizeLimit % WITNESS_SCALE_FACTOR == 0);
         nSizeLimit /= WITNESS_SCALE_FACTOR;
     }
+    nSizeLimit -= mining_auth_size;
     result.pushKV("sigoplimit", nSigOpLimit);
     result.pushKV("sizelimit", nSizeLimit);
     if (!fPreSegWit) {
-        result.pushKV("weightlimit", (int64_t)MAX_BLOCK_WEIGHT);
+        result.pushKV("weightlimit", (int64_t)MAX_BLOCK_WEIGHT - mining_auth_size * WITNESS_SCALE_FACTOR);
     }
     result.pushKV("curtime", pblock->GetBlockTime());
     result.pushKV("bits", strprintf("%08x", pblock->nBits));
@@ -704,6 +737,8 @@ static UniValue submitblock(const JSONRPCRequest& request)
         throw std::runtime_error(
             RPCHelpMan{"submitblock",
                 "\nAttempts to submit new block to network.\n"
+                "After secure mining activation, this daemon authorizes unsigned valid blocks built on its current tip using its configured miningprivkey.\n"
+                "Already signed blocks are validated without replacing their signature.\n"
                 "See https://en.bitcoin.it/wiki/BIP_0022 for full specification.\n",
                 {
                     {"hexdata", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "the hex-encoded block data to submit"},
@@ -743,9 +778,30 @@ static UniValue submitblock(const JSONRPCRequest& request)
 
     {
         LOCK(cs_main);
-        const CBlockIndex* pindex = LookupBlockIndex(block.hashPrevBlock);
+        CBlockIndex* pindex = LookupBlockIndex(block.hashPrevBlock);
         if (pindex) {
-            UpdateUncommittedBlockStructures(block, pindex, Params().GetConsensus());
+            const Consensus::Params& consensus = Params().GetConsensus();
+            UpdateUncommittedBlockStructures(block, pindex, consensus);
+            if (IsSecureMiningActive(pindex->nHeight + 1, consensus) && block.vchMiningSignature.empty()) {
+                if (!HasMiningAuthKey()) {
+                    return "mining-auth-key-missing";
+                }
+                // Full UTXO validation is possible only against the active tip.
+                // Already signed side-chain blocks still follow normal acceptance.
+                if (pindex != chainActive.Tip()) {
+                    return "inconclusive-not-best-prevblk";
+                }
+                CValidationState state;
+                if (!TestBlockValidity(state, Params(), block, pindex, true, true, false)) {
+                    return BIP22ValidationResult(state);
+                }
+                if (GetBlockWeight(block) + MAX_MINING_AUTH_TRAILER_SIZE * WITNESS_SCALE_FACTOR > MAX_BLOCK_WEIGHT) {
+                    return "bad-blk-weight";
+                }
+                if (!SignBlockMiningAuth(block, consensus, pindex->nHeight + 1)) {
+                    return "mining-auth-signing-failed";
+                }
+            }
         }
     }
 

@@ -10,6 +10,11 @@
 #include <serialize.h>
 #include <uint256.h>
 
+class CDataStream;
+static constexpr uint32_t MINING_AUTH_MAGIC = 0x31414d50; // "PMA1", wire format version 1
+static constexpr size_t MAX_MINING_SIGNATURE_SIZE = 72;
+static constexpr size_t MAX_MINING_AUTH_TRAILER_SIZE = 4 + 1 + MAX_MINING_SIGNATURE_SIZE;
+
 /** Nodes collect new transactions into a block, hash them into a hash tree,
  * and scan through nonce values to make the block's hash satisfy proof-of-work
  * requirements.  When they solve the proof-of-work, they broadcast the block
@@ -76,6 +81,7 @@ class CBlock : public CBlockHeader
 public:
     // network and disk
     std::vector<CTransactionRef> vtx;
+    std::vector<unsigned char> vchMiningSignature;
 
     // memory only
     mutable bool fChecked;
@@ -97,12 +103,23 @@ public:
     inline void SerializationOp(Stream& s, Operation ser_action) {
         READWRITEAS(CBlockHeader, *this);
         READWRITE(vtx);
+        // Readers consume the legacy prefix. Full-block entry points must use
+        // ReadBlockWithAuth with the exact network/disk record boundary.
+        if (ser_action.ForRead()) {
+            vchMiningSignature.clear();
+            fChecked = false;
+        } else if (!vchMiningSignature.empty()) {
+            uint32_t magic = MINING_AUTH_MAGIC;
+            READWRITE(magic);
+            READWRITE(vchMiningSignature);
+        }
     }
 
     void SetNull()
     {
         CBlockHeader::SetNull();
         vtx.clear();
+        vchMiningSignature.clear();
         fChecked = false;
     }
 
@@ -120,6 +137,17 @@ public:
 
     std::string ToString() const;
 };
+
+/** Decode one bounded complete block record, including its optional auth trailer. */
+void ReadBlockWithAuth(CDataStream& stream, CBlock& block);
+
+/** Charge fixed auth overhead: alternate valid signatures must have equal weight. */
+inline size_t GetBlockConsensusSize(const CBlock& block, int version)
+{
+    const size_t size = GetSerializeSize(block, version);
+    if (block.vchMiningSignature.empty()) return size;
+    return size - 4 - GetSizeOfCompactSize(block.vchMiningSignature.size()) - block.vchMiningSignature.size() + MAX_MINING_AUTH_TRAILER_SIZE;
+}
 
 /** Describes a place in the block chain to another node such that if the
  * other node doesn't have the same branch, it can find a recent common trunk.

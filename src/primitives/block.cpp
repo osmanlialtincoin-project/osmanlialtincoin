@@ -10,6 +10,24 @@
 #include <util/strencodings.h>
 #include <crypto/common.h>
 #include <crypto/scrypt.h>
+#include <streams.h>
+#include <consensus/consensus.h>
+
+void ReadBlockWithAuth(CDataStream& stream, CBlock& block)
+{
+    if (stream.size() > MAX_BLOCK_SERIALIZED_SIZE) throw std::ios_base::failure("Block record too large");
+    stream >> block;
+    if (stream.empty()) return;
+    uint32_t magic;
+    stream >> magic;
+    if (magic != MINING_AUTH_MAGIC) throw std::ios_base::failure("Unknown mining authorization format");
+    const uint64_t size = ReadCompactSize(stream);
+    if (size < 8 || size > MAX_MINING_SIGNATURE_SIZE || stream.size() != size) {
+        throw std::ios_base::failure("Invalid mining authorization length");
+    }
+    block.vchMiningSignature.resize(size);
+    stream.read(reinterpret_cast<char*>(block.vchMiningSignature.data()), size);
+}
 
 uint256 CBlockHeader::GetHash() const
 {

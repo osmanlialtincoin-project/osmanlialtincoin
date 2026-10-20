@@ -10,6 +10,7 @@
 #include <limits>
 #include <map>
 #include <string>
+#include <vector>
 
 namespace Consensus {
 
@@ -47,6 +48,8 @@ struct BIP9Deployment {
  * Parameters that influence chain consensus.
  */
 struct Params {
+    int nSecureMiningHeight{std::numeric_limits<int>::max()};
+    std::vector<unsigned char> miningAuthPubKey;
     uint256 hashGenesisBlock;
     int nSubsidyHalvingInterval;
     /** Block height at which BIP16 becomes active */

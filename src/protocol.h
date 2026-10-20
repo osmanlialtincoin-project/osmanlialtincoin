@@ -268,6 +268,8 @@ enum ServiceFlags : uint64_t {
     // serving the last 288 (2 day) blocks
     // See BIP159 for details on how this is implemented.
     NODE_NETWORK_LIMITED = (1 << 10),
+    // NODE_MINING_AUTH serves full blocks with the secure-mining signature trailer.
+    NODE_MINING_AUTH = (1 << 11),
 
     // Bits 24-31 are reserved for temporary experiments. Just pick a bit that
     // isn't getting used, or one not being used much, and notify the
@@ -292,12 +294,9 @@ enum ServiceFlags : uint64_t {
  * unless they set NODE_NETWORK_LIMITED and we are out of IBD, in which
  * case NODE_NETWORK_LIMITED suffices).
  *
- * Thus, generally, avoid calling with peerServices == NODE_NONE, unless
- * state-specific flags must absolutely be avoided. When called with
- * peerServices == NODE_NONE, the returned desirable service flags are
- * guaranteed to not change dependent on state - ie they are suitable for
- * use when describing peers which we know to be desirable, but for which
- * we do not have a confirmed set of service flags.
+ * NODE_MINING_AUTH becomes desirable once the next block requires mining
+ * authorization. NODE_NONE selects a full archival peer, with that same
+ * activation requirement, when the peer's advertised services are unknown.
  *
  * If the NODE_NONE return value is changed, contrib/seeds/makeseeds.py
  * should be updated appropriately to filter for the same nodes.
@@ -306,6 +305,9 @@ ServiceFlags GetDesirableServiceFlags(ServiceFlags services);
 
 /** Set the current IBD status in order to figure out the desirable service flags */
 void SetServiceFlagsIBDCache(bool status);
+
+/** Require signed-block-capable outbound peers when the next block needs authorization. */
+void SetServiceFlagsMiningAuthCache(bool required);
 
 /**
  * A shortcut for (services & GetDesirableServiceFlags(services))

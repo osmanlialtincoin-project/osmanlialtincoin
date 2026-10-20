@@ -7,6 +7,7 @@
 #include <test/test_bitcoin.h>
 
 #include <string>
+#include <sstream>
 #include <vector>
 
 #include <boost/algorithm/string.hpp>
@@ -171,6 +172,54 @@ BOOST_AUTO_TEST_CASE(boolargno)
     ResetArgs("-nofoo -foo"); // foo always wins:
     BOOST_CHECK(gArgs.GetBoolArg("-foo", true));
     BOOST_CHECK(gArgs.GetBoolArg("-foo", false));
+}
+
+BOOST_AUTO_TEST_CASE(mining_secret_arguments_do_not_echo_values)
+{
+    const std::string secret = "TEST_ONLY_SECRET_MUST_NOT_APPEAR";
+    for (const std::string option : {"-miningprivkey", "--miningprivkey", "-nominingprivkey", "-main.nominingprivkey", "-regtest.miningprivkey"}) {
+        ArgsManager args;
+        args.AddArg("-miningprivkey", "", false, OptionsCategory::OPTIONS);
+        const std::string argument = option + "=" + secret;
+        const char* argv[] = {"test", argument.c_str()};
+        std::string error;
+        BOOST_CHECK(!args.ParseParameters(2, argv, error));
+        BOOST_CHECK(!error.empty());
+        BOOST_CHECK(error.find(secret) == std::string::npos);
+    }
+}
+
+BOOST_AUTO_TEST_CASE(mining_secret_config_errors_do_not_echo_values)
+{
+    struct ConfigArgs : ArgsManager { using ArgsManager::ReadConfigStream; };
+    const std::string secret = "TEST_ONLY_SECRET_MUST_NOT_APPEAR";
+    for (const std::string text : {
+        "nominingprivkey=" + secret,
+        "main.nominingprivkey=" + secret,
+        "[regtest]\nnominingprivkey=" + secret,
+        "-miningprivkey=" + secret,
+        "miningprivkey " + secret,
+        "MININGPRIVKEY " + secret,
+        "MiningPrivKey=" + secret,
+        "miningprivkey " + secret + "=value",
+        "[miningprivkey " + secret + "]"}) {
+        ConfigArgs args;
+        args.AddArg("-miningprivkey", "", false, OptionsCategory::OPTIONS);
+        std::istringstream config(text);
+        std::string error;
+        BOOST_CHECK(!args.ReadConfigStream(config, error));
+        BOOST_CHECK(!error.empty());
+        BOOST_CHECK(error.find(secret) == std::string::npos);
+    }
+    for (const std::string text : {"regtest.miningprivkey=" + secret, "[regtest]\nminingprivkey=" + secret}) {
+        ConfigArgs args;
+        args.AddArg("-miningprivkey", "", false, OptionsCategory::OPTIONS);
+        args.SelectConfigNetwork("regtest");
+        std::istringstream config(text);
+        std::string error;
+        BOOST_REQUIRE(args.ReadConfigStream(config, error));
+        BOOST_CHECK_EQUAL(args.GetArg("-miningprivkey", ""), secret);
+    }
 }
 
 BOOST_AUTO_TEST_SUITE_END()

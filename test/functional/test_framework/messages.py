@@ -27,7 +27,10 @@ import socket
 import struct
 import time
 
-import osmanli_altin_coin_scrypt
+try:
+    import osmanli_altin_coin_scrypt
+except ImportError:
+    osmanli_altin_coin_scrypt = None
 from test_framework.siphash import siphash256
 from test_framework.util import hex_str_to_bytes, bytes_to_hex_str, assert_equal
 
@@ -48,6 +51,7 @@ NODE_NETWORK = (1 << 0)
 NODE_BLOOM = (1 << 2)
 NODE_WITNESS = (1 << 3)
 NODE_NETWORK_LIMITED = (1 << 10)
+NODE_MINING_AUTH = (1 << 11)
 
 MSG_TX = 1
 MSG_BLOCK = 2
@@ -584,7 +588,9 @@ class CBlockHeader:
             r += struct.pack("<I", self.nNonce)
             self.sha256 = uint256_from_str(hash256(r))
             self.hash = encode(hash256(r)[::-1], 'hex_codec').decode('ascii')
-            self.scrypt256 = uint256_from_str(osmanli_altin_coin_scrypt.getPoWHash(r))
+            pow_hash = (osmanli_altin_coin_scrypt.getPoWHash(r) if osmanli_altin_coin_scrypt
+                        else hashlib.scrypt(r, salt=r, n=1024, r=1, p=1, dklen=32))
+            self.scrypt256 = uint256_from_str(pow_hash)
 
     def rehash(self):
         self.sha256 = None
@@ -601,15 +607,24 @@ BLOCK_HEADER_SIZE = len(CBlockHeader().serialize())
 assert_equal(BLOCK_HEADER_SIZE, 80)
 
 class CBlock(CBlockHeader):
-    __slots__ = ("vtx",)
+    __slots__ = ("vtx", "vchMiningSignature")
 
     def __init__(self, header=None):
         super(CBlock, self).__init__(header)
         self.vtx = []
+        self.vchMiningSignature = b""
 
     def deserialize(self, f):
         super(CBlock, self).deserialize(f)
         self.vtx = deser_vector(f, CTransaction)
+        self.vchMiningSignature = b""
+        marker = f.read(4)
+        if marker:
+            if marker != b"PMA1":
+                raise ValueError("Unknown mining authorization trailer")
+            self.vchMiningSignature = deser_string(f)
+            if not 8 <= len(self.vchMiningSignature) <= 72 or f.read(1):
+                raise ValueError("Invalid mining authorization trailer")
 
     def serialize(self, with_witness=False):
         r = b""
@@ -618,6 +633,8 @@ class CBlock(CBlockHeader):
             r += ser_vector(self.vtx, "serialize_with_witness")
         else:
             r += ser_vector(self.vtx, "serialize_without_witness")
+        if self.vchMiningSignature:
+            r += b"PMA1" + ser_string(self.vchMiningSignature)
         return r
 
     # Calculate the merkle root given a vector of transaction hashes
@@ -1309,14 +1326,17 @@ class msg_headers:
         self.headers = headers if headers is not None else []
 
     def deserialize(self, f):
-        # comment in bitcoind indicates these should be deserialized as blocks
-        blocks = deser_vector(f, CBlock)
-        for x in blocks:
-            self.headers.append(CBlockHeader(x))
+        self.headers = []
+        for _ in range(deser_compact_size(f)):
+            header = CBlockHeader()
+            header.deserialize(f)
+            if deser_compact_size(f) != 0:
+                raise ValueError("Headers message contains transactions")
+            self.headers.append(header)
 
     def serialize(self):
-        blocks = [CBlock(x) for x in self.headers]
-        return ser_vector(blocks)
+        return ser_compact_size(len(self.headers)) + b"".join(
+            CBlockHeader(header).serialize() + b"\x00" for header in self.headers)
 
     def __repr__(self):
         return "msg_headers(headers=%s)" % repr(self.headers)

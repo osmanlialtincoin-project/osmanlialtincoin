@@ -13,6 +13,7 @@
 #endif
 
 static std::atomic<bool> g_initial_block_download_completed(false);
+static std::atomic<bool> g_mining_auth_required(false);
 
 namespace NetMsgType {
 const char *VERSION="version";
@@ -130,14 +131,19 @@ bool CMessageHeader::IsValid(const MessageStartChars& pchMessageStartIn) const
 
 
 ServiceFlags GetDesirableServiceFlags(ServiceFlags services) {
+    const ServiceFlags auth = g_mining_auth_required ? NODE_MINING_AUTH : NODE_NONE;
     if ((services & NODE_NETWORK_LIMITED) && g_initial_block_download_completed) {
-        return ServiceFlags(NODE_NETWORK_LIMITED | NODE_WITNESS);
+        return ServiceFlags(NODE_NETWORK_LIMITED | NODE_WITNESS | auth);
     }
-    return ServiceFlags(NODE_NETWORK | NODE_WITNESS);
+    return ServiceFlags(NODE_NETWORK | NODE_WITNESS | auth);
 }
 
 void SetServiceFlagsIBDCache(bool state) {
     g_initial_block_download_completed = state;
+}
+
+void SetServiceFlagsMiningAuthCache(bool required) {
+    g_mining_auth_required = required;
 }
 
 

@@ -14,6 +14,7 @@
 #include <hash.h>
 #include <validation.h>
 #include <merkleblock.h>
+#include <mining_auth.h>
 #include <netmessagemaker.h>
 #include <netbase.h>
 #include <policy/fees.h>
@@ -239,6 +240,8 @@ struct CNodeState {
     bool fProvidesHeaderAndIDs;
     //! Whether this peer can give us witnesses
     bool fHaveWitness;
+    //! Whether this peer can serve full blocks with mining authorization.
+    bool fHaveMiningAuth;
     //! Whether this peer wants witnesses in cmpctblocks/blocktxns
     bool fWantsCmpctWitness;
     /**
@@ -297,6 +300,7 @@ struct CNodeState {
         fPreferHeaderAndIDs = false;
         fProvidesHeaderAndIDs = false;
         fHaveWitness = false;
+        fHaveMiningAuth = false;
         fWantsCmpctWitness = false;
         fSupportsDesiredCmpctVersion = false;
         m_chain_sync = { 0, nullptr, false, false };
@@ -319,7 +323,8 @@ static void UpdatePreferredDownload(CNode* node, CNodeState* state) EXCLUSIVE_LO
     nPreferredDownload -= state->fPreferredDownload;
 
     // Whether this node should be marked as a preferred download node.
-    state->fPreferredDownload = (!node->fInbound || node->fWhitelisted) && !node->fOneShot && !node->fClient;
+    state->fPreferredDownload = (!node->fInbound || node->fWhitelisted) && !node->fOneShot && !node->fClient &&
+        (!IsSecureMiningActive(chainActive.Height() + 1, Params().GetConsensus()) || state->fHaveMiningAuth);
 
     nPreferredDownload += state->fPreferredDownload;
 }
@@ -450,8 +455,9 @@ static void MaybeSetPeerAsAnnouncingHeaderAndIDs(NodeId nodeid, CConnman* connma
 {
     AssertLockHeld(cs_main);
     CNodeState* nodestate = State(nodeid);
-    if (!nodestate || !nodestate->fSupportsDesiredCmpctVersion) {
-        // Never ask from peers who can't provide witnesses.
+    if (!nodestate || !nodestate->fSupportsDesiredCmpctVersion ||
+            IsSecureMiningActive(chainActive.Height() + 1, Params().GetConsensus())) {
+        // Never request compact blocks without witnesses or across activation.
         return;
     }
     if (nodestate->fProvidesHeaderAndIDs) {
@@ -567,6 +573,9 @@ static void FindNextBlocksToDownload(NodeId nodeid, unsigned int count, std::vec
             }
             if (!State(nodeid)->fHaveWitness && IsWitnessEnabled(pindex->pprev, consensusParams)) {
                 // We wouldn't download this block or its descendants from this peer.
+                return;
+            }
+            if (!state->fHaveMiningAuth && IsSecureMiningActive(pindex->nHeight, consensusParams)) {
                 return;
             }
             if (pindex->nStatus & BLOCK_HAVE_DATA || chainActive.Contains(pindex)) {
@@ -917,7 +926,11 @@ static bool fWitnessesPresentInMostRecentCompactBlock GUARDED_BY(cs_most_recent_
  * to compatible peers.
  */
 void PeerLogicValidation::NewPoWValidBlock(const CBlockIndex *pindex, const std::shared_ptr<const CBlock>& pblock) {
-    std::shared_ptr<const CBlockHeaderAndShortTxIDs> pcmpctblock = std::make_shared<const CBlockHeaderAndShortTxIDs> (*pblock, true);
+    const bool secure_mining = IsSecureMiningActive(pindex->nHeight, Params().GetConsensus());
+    std::shared_ptr<const CBlockHeaderAndShortTxIDs> pcmpctblock;
+    if (!secure_mining) {
+        pcmpctblock = std::make_shared<const CBlockHeaderAndShortTxIDs>(*pblock, true);
+    }
     const CNetMsgMaker msgMaker(PROTOCOL_VERSION);
 
     LOCK(cs_main);
@@ -937,6 +950,9 @@ void PeerLogicValidation::NewPoWValidBlock(const CBlockIndex *pindex, const std:
         most_recent_compact_block = pcmpctblock;
         fWitnessesPresentInMostRecentCompactBlock = fWitnessEnabled;
     }
+
+    // BIP152 reconstructs only transactions and cannot carry authorization.
+    if (secure_mining) return;
 
     connman->ForEachNode([this, &pcmpctblock, pindex, &msgMaker, fWitnessEnabled, &hashBlock](CNode* pnode) {
         AssertLockHeld(cs_main);
@@ -968,6 +984,18 @@ void PeerLogicValidation::UpdatedBlockTip(const CBlockIndex *pindexNew, const CB
     connman->SetBestHeight(nNewHeight);
 
     SetServiceFlagsIBDCache(!fInitialDownload);
+    SetServiceFlagsMiningAuthCache(IsSecureMiningActive(nNewHeight + 1, Params().GetConsensus()));
+    if (IsSecureMiningActive(nNewHeight + 1, Params().GetConsensus())) {
+        LOCK(cs_main);
+        for (const NodeId nodeid : lNodesAnnouncingHeaderAndIDs) {
+            connman->ForNode(nodeid, [this](CNode* peer) {
+                const uint64_t version = (peer->GetLocalServices() & NODE_WITNESS) ? 2 : 1;
+                connman->PushMessage(peer, CNetMsgMaker(peer->GetSendVersion()).Make(NetMsgType::SENDCMPCT, false, version));
+                return true;
+            });
+        }
+        lNodesAnnouncingHeaderAndIDs.clear();
+    }
     if (!fInitialDownload) {
         // Find the hashes of all blocks that weren't previously in the best chain.
         std::vector<uint256> vHashes;
@@ -1247,7 +1275,8 @@ void static ProcessGetBlockData(CNode* pfrom, const CChainParams& chainparams, c
                 // instead we respond with the full, non-compact block.
                 bool fPeerWantsWitness = State(pfrom->GetId())->fWantsCmpctWitness;
                 int nSendFlags = fPeerWantsWitness ? 0 : SERIALIZE_TRANSACTION_NO_WITNESS;
-                if (CanDirectFetch(consensusParams) && pindex->nHeight >= chainActive.Height() - MAX_CMPCTBLOCK_DEPTH) {
+                if (!IsSecureMiningActive(pindex->nHeight, consensusParams) &&
+                        CanDirectFetch(consensusParams) && pindex->nHeight >= chainActive.Height() - MAX_CMPCTBLOCK_DEPTH) {
                     if ((fPeerWantsWitness || !fWitnessesPresentInARecentCompactBlock) && a_recent_compact_block && a_recent_compact_block->header.GetHash() == pindex->GetBlockHash()) {
                         connman->PushMessage(pfrom, msgMaker.Make(nSendFlags, NetMsgType::CMPCTBLOCK, *a_recent_compact_block));
                     } else {
@@ -1507,6 +1536,7 @@ bool static ProcessHeadersMessage(CNode *pfrom, CConnman *connman, const std::ve
             while (pindexWalk && !chainActive.Contains(pindexWalk) && vToFetch.size() <= MAX_BLOCKS_IN_TRANSIT_PER_PEER) {
                 if (!(pindexWalk->nStatus & BLOCK_HAVE_DATA) &&
                         !mapBlocksInFlight.count(pindexWalk->GetBlockHash()) &&
+                        (!IsSecureMiningActive(pindexWalk->nHeight, chainparams.GetConsensus()) || nodestate->fHaveMiningAuth) &&
                         (!IsWitnessEnabled(pindexWalk->pprev, chainparams.GetConsensus()) || State(pfrom->GetId())->fHaveWitness)) {
                     // We don't have this block, and it's not yet in flight.
                     vToFetch.push_back(pindexWalk);
@@ -1540,7 +1570,9 @@ bool static ProcessHeadersMessage(CNode *pfrom, CConnman *connman, const std::ve
                             pindexLast->GetBlockHash().ToString(), pindexLast->nHeight);
                 }
                 if (vGetData.size() > 0) {
-                    if (nodestate->fSupportsDesiredCmpctVersion && vGetData.size() == 1 && mapBlocksInFlight.size() == 1 && pindexLast->pprev->IsValid(BLOCK_VALID_CHAIN)) {
+                    if (nodestate->fSupportsDesiredCmpctVersion && vGetData.size() == 1 && mapBlocksInFlight.size() == 1 &&
+                            !IsSecureMiningActive(LookupBlockIndex(vGetData[0].hash)->nHeight, chainparams.GetConsensus()) &&
+                            pindexLast->pprev->IsValid(BLOCK_VALID_CHAIN)) {
                         // In any case, we want to download using a compact block, not a regular one
                         vGetData[0] = CInv(MSG_CMPCT_BLOCK, vGetData[0].hash);
                     }
@@ -1810,6 +1842,7 @@ bool static ProcessMessage(CNode* pfrom, const std::string& strCommand, CDataStr
         // Potentially mark this peer as a preferred download peer.
         {
         LOCK(cs_main);
+        State(pfrom->GetId())->fHaveMiningAuth = (nServices & NODE_MINING_AUTH) != 0;
         UpdatePreferredDownload(pfrom, State(pfrom->GetId()));
         }
 
@@ -2151,27 +2184,28 @@ bool static ProcessMessage(CNode* pfrom, const std::string& strCommand, CDataStr
         BlockTransactionsRequest req;
         vRecv >> req;
 
-        std::shared_ptr<const CBlock> recent_block;
-        {
-            LOCK(cs_most_recent_block);
-            if (most_recent_block_hash == req.blockhash)
-                recent_block = most_recent_block;
-            // Unlock cs_most_recent_block to avoid cs_main lock inversion
-        }
-        if (recent_block) {
-            SendBlockTransactions(*recent_block, req, pfrom, connman);
-            return true;
-        }
-
         LOCK(cs_main);
-
         const CBlockIndex* pindex = LookupBlockIndex(req.blockhash);
         if (!pindex || !(pindex->nStatus & BLOCK_HAVE_DATA)) {
             LogPrint(BCLog::NET, "Peer %d sent us a getblocktxn for a block we don't have\n", pfrom->GetId());
             return true;
         }
 
-        if (pindex->nHeight < chainActive.Height() - MAX_BLOCKTXN_DEPTH) {
+        std::shared_ptr<const CBlock> recent_block;
+        {
+            LOCK(cs_most_recent_block);
+            if (most_recent_block_hash == req.blockhash)
+                recent_block = most_recent_block;
+        }
+        if (recent_block && !IsSecureMiningActive(pindex->nHeight, chainparams.GetConsensus())) {
+            SendBlockTransactions(*recent_block, req, pfrom, connman);
+            return true;
+        }
+
+        if (IsSecureMiningActive(pindex->nHeight, chainparams.GetConsensus()) ||
+                pindex->nHeight < chainActive.Height() - MAX_BLOCKTXN_DEPTH) {
+            // Authorization cannot be carried in blocktxn. For old blocks,
+            // preserve the existing full-block fallback as well.
             // If an older block is requested (should never happen in practice,
             // but can happen in tests) send a block response instead of a
             // blocktxn response. Sending a full block response instead of a
@@ -2179,7 +2213,7 @@ bool static ProcessMessage(CNode* pfrom, const std::string& strCommand, CDataStr
             // might maliciously send lots of getblocktxn requests to trigger
             // expensive disk reads, because it will require the peer to
             // actually receive all the data read from disk over the network.
-            LogPrint(BCLog::NET, "Peer %d sent us a getblocktxn for a block > %i deep\n", pfrom->GetId(), MAX_BLOCKTXN_DEPTH);
+            LogPrint(BCLog::NET, "Serving full block for getblocktxn from peer=%d\n", pfrom->GetId());
             CInv inv;
             inv.type = State(pfrom->GetId())->fWantsCmpctWitness ? MSG_WITNESS_BLOCK : MSG_BLOCK;
             inv.hash = req.blockhash;
@@ -2449,6 +2483,12 @@ bool static ProcessMessage(CNode* pfrom, const std::string& strCommand, CDataStr
             }
         }
 
+        if (pindex && IsSecureMiningActive(pindex->nHeight, chainparams.GetConsensus())) {
+            // Treat the compact block as a header announcement. The normal
+            // downloader requests a full signed block from a capable peer.
+            return ProcessHeadersMessage(pfrom, connman, {cmpctblock.header}, chainparams, /*punish_duplicate_invalid=*/false);
+        }
+
         // When we succeed in decoding a block's txids from a cmpctblock
         // message we typically jump to the BLOCKTXN handling code, with a
         // dummy (empty) BLOCKTXN message, to re-use the logic there in
@@ -2650,6 +2690,18 @@ bool static ProcessMessage(CNode* pfrom, const std::string& strCommand, CDataStr
                 return true;
             }
 
+            const CBlockIndex* pindex = LookupBlockIndex(resp.blockhash);
+            if (pindex && IsSecureMiningActive(pindex->nHeight, chainparams.GetConsensus())) {
+                it->second.second->partialBlock.reset();
+                if (State(pfrom->GetId())->fHaveMiningAuth) {
+                    const std::vector<CInv> invs{CInv(MSG_BLOCK | GetFetchFlags(pfrom), resp.blockhash)};
+                    connman->PushMessage(pfrom, msgMaker.Make(NetMsgType::GETDATA, invs));
+                } else {
+                    MarkBlockAsReceived(resp.blockhash);
+                }
+                return true;
+            }
+
             PartiallyDownloadedBlock& partialBlock = *it->second.second->partialBlock;
             ReadStatus status = partialBlock.FillBlock(*pblock, resp.txn);
             if (status == READ_STATUS_INVALID) {
@@ -2736,7 +2788,7 @@ bool static ProcessMessage(CNode* pfrom, const std::string& strCommand, CDataStr
     if (strCommand == NetMsgType::BLOCK && !fImporting && !fReindex) // Ignore blocks received while importing
     {
         std::shared_ptr<CBlock> pblock = std::make_shared<CBlock>();
-        vRecv >> *pblock;
+        ReadBlockWithAuth(vRecv, *pblock);
 
         LogPrint(BCLog::NET, "received block %s peer=%d\n", pblock->GetHash().ToString(), pfrom->GetId());
 
@@ -3305,6 +3357,15 @@ bool PeerLogicValidation::SendMessages(CNode* pto)
         if (SendRejectsAndCheckIfBanned(pto, m_enable_bip61)) return true;
         CNodeState &state = *State(pto->GetId());
 
+        const bool need_mining_auth = IsSecureMiningActive(chainActive.Height() + 1, consensusParams);
+        SetServiceFlagsMiningAuthCache(need_mining_auth);
+        UpdatePreferredDownload(pto, &state);
+        if (need_mining_auth && !state.fHaveMiningAuth && IsOutboundDisconnectionCandidate(pto) && !pto->fWhitelisted) {
+            LogPrint(BCLog::NET, "Disconnecting outbound peer=%d without signed-block support\n", pto->GetId());
+            pto->fDisconnect = true;
+            return true;
+        }
+
         // Address refresh broadcast
         int64_t nNow = GetTimeMicros();
         if (!IsInitialBlockDownload() && pto->nNextLocalAddrSend < nNow) {
@@ -3441,7 +3502,8 @@ bool PeerLogicValidation::SendMessages(CNode* pto)
                 }
             }
             if (!fRevertToInv && !vHeaders.empty()) {
-                if (vHeaders.size() == 1 && state.fPreferHeaderAndIDs) {
+                if (vHeaders.size() == 1 && state.fPreferHeaderAndIDs &&
+                        !IsSecureMiningActive(pBestIndex->nHeight, consensusParams)) {
                     // We only send up to 1 block as header-and-ids, as otherwise
                     // probably means we're doing an initial-ish-sync or they're slow
                     LogPrint(BCLog::NET, "%s sending header-and-ids %s to peer=%d\n", __func__,

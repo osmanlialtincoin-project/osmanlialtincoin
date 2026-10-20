@@ -25,6 +25,7 @@
 #include <key.h>
 #include <validation.h>
 #include <miner.h>
+#include <mining_auth.h>
 #include <netbase.h>
 #include <net.h>
 #include <net_processing.h>
@@ -302,6 +303,7 @@ void Shutdown(InitInterfaces& interfaces)
     UnregisterAllValidationInterfaces();
     GetMainSignals().UnregisterBackgroundSignalScheduler();
     GetMainSignals().UnregisterWithMempoolSignals(mempool);
+    ClearMiningAuthKey();
     globalVerifyHandle.reset();
     ECC_Stop();
     LogPrintf("%s: done\n", __func__);
@@ -528,6 +530,8 @@ void SetupServerArgs()
     gArgs.AddArg("-blockmaxweight=<n>", strprintf("Set maximum BIP141 block weight (default: %d)", DEFAULT_BLOCK_MAX_WEIGHT), false, OptionsCategory::BLOCK_CREATION);
     gArgs.AddArg("-blockmintxfee=<amt>", strprintf("Set lowest fee rate (in %s/kB) for transactions to be included in block creation. (default: %s)", CURRENCY_UNIT, FormatMoney(DEFAULT_BLOCK_MIN_TX_FEE)), false, OptionsCategory::BLOCK_CREATION);
     gArgs.AddArg("-blockversion=<n>", "Override block version to test forking scenarios", true, OptionsCategory::BLOCK_CREATION);
+    gArgs.AddArg("-miningprivkey=<WIF>", "Secure mining authorization key (configuration file only; never required for block verification)", false, OptionsCategory::BLOCK_CREATION);
+    gArgs.AddArg("-secureminingheight=<n>", "Override secure mining activation height (regtest only)", true, OptionsCategory::DEBUG_TEST);
 
     gArgs.AddArg("-rest", strprintf("Accept public REST requests (default: %u)", DEFAULT_REST_ENABLE), false, OptionsCategory::RPC);
     gArgs.AddArg("-rpcallowip=<ip>", "Allow JSON-RPC connections from specified source. Valid for <ip> are a single IP (e.g. 1.2.3.4), a network/netmask (e.g. 1.2.3.4/255.255.255.0) or a network/CIDR (e.g. 1.2.3.4/24). This option can be specified multiple times", false, OptionsCategory::RPC);
@@ -887,7 +891,7 @@ namespace { // Variables internal to initialization process only
 int nMaxConnections;
 int nUserMaxConnections;
 int nFD;
-ServiceFlags nLocalServices = ServiceFlags(NODE_NETWORK | NODE_NETWORK_LIMITED);
+ServiceFlags nLocalServices = ServiceFlags(NODE_NETWORK | NODE_NETWORK_LIMITED | NODE_MINING_AUTH);
 int64_t peer_connect_timeout;
 
 } // namespace
@@ -1200,6 +1204,11 @@ bool AppInitSanityChecks()
     RandomInit();
     ECC_Start();
     globalVerifyHandle.reset(new ECCVerifyHandle());
+
+    std::string mining_key_error;
+    if (!InitMiningAuthKey(gArgs.GetArg("-miningprivkey", ""), Params().GetConsensus(), mining_key_error)) {
+        return InitError(mining_key_error);
+    }
 
     // Sanity check
     if (!InitSanityCheck())
@@ -1736,6 +1745,7 @@ bool AppInitMain(InitInterfaces& interfaces)
         LOCK(cs_main);
         LogPrintf("mapBlockIndex.size() = %u\n", mapBlockIndex.size());
         chain_active_height = chainActive.Height();
+        SetServiceFlagsMiningAuthCache(IsSecureMiningActive(chain_active_height + 1, chainparams.GetConsensus()));
     }
     LogPrintf("nBestHeight = %d\n", chain_active_height);
 

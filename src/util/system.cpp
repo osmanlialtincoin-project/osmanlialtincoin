@@ -259,6 +259,17 @@ public:
     }
 };
 
+static bool ContainsMiningKeyOption(std::string text)
+{
+    std::transform(text.begin(), text.end(), text.begin(), ToLower);
+    return text.find("miningprivkey") != std::string::npos;
+}
+
+static std::string RedactMiningKeyOption(const std::string& text)
+{
+    return ContainsMiningKeyOption(text) ? "[redacted mining key option]" : text;
+}
+
 /**
  * Interpret -nofoo as if the user supplied -foo=0.
  *
@@ -295,7 +306,8 @@ static bool InterpretNegatedOption(std::string& key, std::string& val)
         key.erase(option_index, 2);
         if (!bool_val ) {
             // Double negatives like -nofoo=0 are supported (but discouraged)
-            LogPrintf("Warning: parsed potentially confusing double-negative %s=%s\n", key, val);
+            LogPrintf("Warning: parsed potentially confusing double-negative %s=%s\n", RedactMiningKeyOption(key),
+                ContainsMiningKeyOption(key) ? "[redacted]" : val);
             val = "1";
         } else {
             return true;
@@ -403,6 +415,11 @@ bool ArgsManager::ParseParameters(int argc, const char* const argv[], std::strin
         // Transform --foo to -foo
         if (key.length() > 1 && key[1] == '-')
             key.erase(0, 1);
+
+        if (ContainsMiningKeyOption(key)) {
+            error = "miningprivkey must be set in the configuration file, not on the command line";
+            return false;
+        }
 
         // Check for -nofoo
         if (InterpretNegatedOption(key, val)) {
@@ -806,17 +823,26 @@ static bool GetConfigOptions(std::istream& stream, std::string& error, std::vect
         }
         const static std::string pattern = " \t\r\n";
         str = TrimString(str, pattern);
+        const std::string diagnostic = RedactMiningKeyOption(str);
         if (!str.empty()) {
             if (*str.begin() == '[' && *str.rbegin() == ']') {
                 const std::string section = str.substr(1, str.size() - 2);
+                if (ContainsMiningKeyOption(section)) {
+                    error = strprintf("parse error on line %i: miningprivkey must be an option, not a section", linenr);
+                    return false;
+                }
                 sections.insert(section);
                 prefix = section + '.';
             } else if (*str.begin() == '-') {
-                error = strprintf("parse error on line %i: %s, options in configuration file must be specified without leading -", linenr, str);
+                error = strprintf("parse error on line %i: %s, options in configuration file must be specified without leading -", linenr, diagnostic);
                 return false;
             } else if ((pos = str.find('=')) != std::string::npos) {
                 std::string name = prefix + TrimString(str.substr(0, pos), pattern);
                 std::string value = TrimString(str.substr(pos + 1), pattern);
+                if (name.find("nominingprivkey") != std::string::npos) {
+                    error = strprintf("parse error on line %i: miningprivkey cannot be negated", linenr);
+                    return false;
+                }
                 if (used_hash && name.find("rpcpassword") != std::string::npos) {
                     error = strprintf("parse error on line %i, using # in rpcpassword can be ambiguous and should be avoided", linenr);
                     return false;
@@ -826,9 +852,9 @@ static bool GetConfigOptions(std::istream& stream, std::string& error, std::vect
                     sections.insert(name.substr(0, pos));
                 }
             } else {
-                error = strprintf("parse error on line %i: %s", linenr, str);
+                error = strprintf("parse error on line %i: %s", linenr, diagnostic);
                 if (str.size() >= 2 && str.substr(0, 2) == "no") {
-                    error += strprintf(", if you intended to specify a negated option, use %s=1 instead", str);
+                    error += strprintf(", if you intended to specify a negated option, use %s=1 instead", diagnostic);
                 }
                 return false;
             }
@@ -859,10 +885,10 @@ bool ArgsManager::ReadConfigStream(std::istream& stream, std::string& error, boo
         // Check that the arg is known
         if (!IsArgKnown(strKey)) {
             if (!ignore_invalid_keys) {
-                error = strprintf("Invalid configuration value %s", option.first.c_str());
+                error = strprintf("Invalid configuration value %s", RedactMiningKeyOption(option.first));
                 return false;
             } else {
-                LogPrintf("Ignoring unknown configuration value %s\n", option.first);
+                LogPrintf("Ignoring unknown configuration value %s\n", RedactMiningKeyOption(option.first));
             }
         }
     }
